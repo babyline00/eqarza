@@ -1,0 +1,262 @@
+// Prisma schema for Pakistani Loan App
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-1.0.x", "debian-openssl-3.0.x", "rhel-openssl-1.0.x", "rhel-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  phone        String   @unique
+  name         String?
+  otp          String?
+  otpExpiresAt DateTime?
+  blocked      Boolean  @default(false)
+  deleted      Boolean  @default(false)
+  referralCode String?  @unique
+  referredBy   String?
+  rewardBalance Int     @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  kyc          Kyc?
+  loans        Loan[]
+  notifications Notification[]
+
+  @@index([blocked])
+  @@index([createdAt])
+}
+
+model Kyc {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id])
+
+  // Personal Info
+  fullName        String
+  cnic            String
+  fatherName      String?
+  dob             String?
+  education       String?
+  maritalStatus   String?
+  gender          String?
+
+  // Address
+  city            String
+  address         String
+  email           String?
+
+  // Work / Income
+  occupation      String   // "Job" | "Business"
+  monthlyIncome   Int      // in PKR
+  employerName    String?
+
+  // Existing Loans
+  hasExistingLoan Boolean  @default(false)
+  existingLoanAmount Int?  // 4000 / 8000 / 12000 / 21000
+  existingLoanSource String? // app name or JazzCash/EasyPaisa
+
+  // Reference
+  referenceName   String?
+  referencePhone  String?
+  referenceRelation String?
+
+  // Document uploads (images)
+  cnicFrontImage  String?  // CNIC front side image url
+  cnicBackImage   String?  // CNIC back side image url
+  selfieImage     String?  // selfie / face capture image url
+
+  // Verification status
+  kycStatus       String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  kycReviewedAt   DateTime?
+  kycAdminNote    String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([kycStatus])
+  @@index([kycStatus, createdAt])
+}
+
+model Loan {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+
+  amount          Int      // principal loan amount (4000 / 8000 / 18000 / 26000 / 55000)
+  termDays        Int      @default(30)
+  weeklyInstallment Int    // amount payable each week
+  totalInstallments Int    @default(4)  // 4 weeks for 1 month
+  interestRate    Float    @default(0)  // 0 for sharia-compliant feel
+
+  // Withdrawal account
+  withdrawalMethod String? // "JazzCash" | "EasyPaisa" | "Bank"
+  withdrawalAccountTitle String?
+  withdrawalAccountNumber String?
+  withdrawalBank  String?
+
+  // Downpayment (10% security)
+  downpaymentAmount Int?   // 10% of loan
+  downpaymentStatus String @default("PENDING") // PENDING | APPROVED | REJECTED
+  downpaymentProof String? // image url / data
+  downpaymentUploadedAt DateTime?
+  downpaymentReviewedAt DateTime?
+  downpaymentAdminNote String?
+
+  // Referral code used when this loan was applied
+  referredCode String?
+
+  // 1st installment (unlock withdrawal)
+  firstInstallmentPaid Boolean @default(false)
+  firstInstallmentPaidAt DateTime?
+
+  // Loan lifecycle
+  status          String   @default("DRAFT") // DRAFT | DOWNPAYMENT_PENDING | DOWNPAYMENT_APPROVED | FIRST_INSTALLMENT_PENDING | ACTIVE | COMPLETED | REJECTED
+  withdrawalUnlocked Boolean @default(false)
+  withdrawnAmount Int?
+  withdrawnAt     DateTime?
+
+  // Withdrawal (disbursement) management — admin sends money then records the txn
+  withdrawalStatus String  @default("PENDING") // PENDING | PAID | REJECTED
+  withdrawalTxnId  String? // transaction ID recorded by admin after sending money
+  withdrawalReviewedAt DateTime?
+  withdrawalAdminNote String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  installments    Installment[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([status, createdAt])
+  @@index([userId, status])
+  @@index([downpaymentStatus])
+  @@index([createdAt])
+  @@index([downpaymentStatus, downpaymentProof])
+  @@index([withdrawalStatus, withdrawalUnlocked])
+}
+
+model Installment {
+  id          String   @id @default(cuid())
+  loanId      String
+  loan        Loan     @relation(fields: [loanId], references: [id])
+  installmentNumber Int // 1, 2, 3, 4
+  amount      Int
+  dueDate     DateTime
+  status      String   @default("PENDING") // PENDING | PAID | OVERDUE
+  paidAt      DateTime?
+  proofImage  String?  // user uploads payment proof
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([loanId, status])
+  @@index([dueDate])
+  @@index([status, proofImage])
+}
+
+model Admin {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  passwordHash String
+  createdAt DateTime @default(now())
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  title     String
+  body      String
+  type      String   // "INSTALLMENT_REMINDER" | "DOWNPAYMENT_APPROVED" | "WEEKLY_REMINDER"
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
+  @@index([createdAt])
+}
+
+model OtpStore {
+  id        String   @id @default(cuid())
+  phone     String   @unique
+  code      String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model DepositAccount {
+  id            String   @id @default(cuid())
+  method        String   // JazzCash / EasyPaisa / Bank Transfer (HBL)
+  accountTitle  String
+  accountNumber String
+  color         String   @default("#00A651")
+  isActive      Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([isActive])
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model Video {
+  id        String   @id @default(cuid())
+  title     String
+  subtitle  String?
+  url       String   // video file url (/uploads/videos/...)
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([active, sortOrder])
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  type      String   // e.g. KYC_APPROVED, DOWNPAYMENT_APPROVED, USER_BLOCKED, ADMIN_LOGIN ...
+  actor     String   // admin username (or "system")
+  action    String   // short title e.g. "Approved KYC"
+  details   String?
+  userId    String?
+  loanId    String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// Role template for staff members. Each role toggles which admin modules
+// the assigned staff can open and act in. Super admin (Admin table) always
+// has full access and is the only one who can manage roles/staff.
+model StaffRole {
+  id             String  @id @default(cuid())
+  name           String  @unique
+  canUsers       Boolean @default(false)
+  canPayments    Boolean @default(false)
+  canLoans       Boolean @default(false)
+  canWithdrawals Boolean @default(false)
+  canKyc         Boolean @default(false)
+  staff          Staff[]
+  createdAt      DateTime @default(now())
+}
+
+// Staff account created by the super admin. Logs in through the same
+// /admin console with username + password; token = passwordHash.
+model Staff {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  passwordHash String
+  blocked      Boolean   @default(false)
+  role         StaffRole @relation(fields: [roleId], references: [id])
+  roleId       String
+  createdAt    DateTime  @default(now())
+}
